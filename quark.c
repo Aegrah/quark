@@ -2221,9 +2221,11 @@ quark_event_dump(const struct quark_event *qev, FILE *f)
 
 		process_vm_access = &qev->process_vm_access;
 
-		PF(fl, "target_pid=%d op=%s local_iovcnt=%llu remote_iovcnt=%llu "
+		PF(fl, "target_pid=%d target_start_time=%llu op=%s "
+		    "local_iovcnt=%llu remote_iovcnt=%llu "
 		    "remote_addr=0x%llx bytes_requested=%llu ret=%lld\n",
 		    process_vm_access->target_pid,
+		    process_vm_access->target_start_time_ns,
 		    process_vm_access->operation == QUARK_PROCESS_VM_ACCESS_WRITE ?
 		    "write" : "read",
 		    process_vm_access->local_iovcnt,

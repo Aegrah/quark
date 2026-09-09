@@ -147,8 +147,9 @@ type Ptrace struct {
 }
 
 type ProcessVmAccess struct {
-	TargetPid      uint32
-	Operation      uint32
+	TargetPid         uint32
+	Operation         uint32
+	TargetStartTimeNs uint64
 	LocalIovcnt    uint64
 	RemoteIovcnt   uint64
 	RemoteAddr     uint64
@@ -623,6 +624,7 @@ func processVmAccessFromC(cProcessVmAccess *C.struct_quark_process_vm_access) Pr
 
 	processVmAccess.TargetPid = uint32(cProcessVmAccess.target_pid)
 	processVmAccess.Operation = uint32(cProcessVmAccess.operation)
+	processVmAccess.TargetStartTimeNs = uint64(cProcessVmAccess.target_start_time_ns)
 	processVmAccess.LocalIovcnt = uint64(cProcessVmAccess.local_iovcnt)
 	processVmAccess.RemoteIovcnt = uint64(cProcessVmAccess.remote_iovcnt)
 	processVmAccess.RemoteAddr = uint64(cProcessVmAccess.remote_addr)

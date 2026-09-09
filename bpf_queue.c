@@ -622,6 +622,7 @@ ebpf_events_to_raw(struct quark_queue *qq, struct ebpf_event_header *ev)
 
 		qpva = &raw->process_vm_access.quark_process_vm_access;
 		qpva->target_pid = pva->target_pid;
+		qpva->target_start_time_ns = pva->target_start_time_ns;
 		qpva->operation = pva->operation;
 		qpva->local_iovcnt = pva->local_iovcnt;
 		qpva->remote_iovcnt = pva->remote_iovcnt;
@@ -1301,6 +1302,10 @@ bpf_queue_open1(struct quark_queue *qq, int use_fentry)
 		    p->progs.tracepoint_syscalls_sys_enter_process_vm_writev, 1);
 		bpf_program__set_autoload(
 		    p->progs.tracepoint_syscalls_sys_exit_process_vm_writev, 1);
+		if (use_fentry)
+			bpf_program__set_autoload(p->progs.fentry__mm_access, 1);
+		else
+			bpf_program__set_autoload(p->progs.kprobe__mm_access, 1);
 	}
 
 	if (qq->flags & QQ_MODULE_LOAD)

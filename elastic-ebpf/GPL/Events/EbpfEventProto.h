@@ -381,8 +381,9 @@ enum ebpf_process_vm_access_operation {
 struct ebpf_process_vm_access_event {
     struct ebpf_event_header hdr;
     struct ebpf_pid_info pids;
-    uint32_t target_pid;
+    uint32_t target_pid;             // resolved global tgid of the target
     uint32_t operation; // enum ebpf_process_vm_access_operation
+    uint64_t target_start_time_ns;   // target start time, for pid disambiguation
     uint64_t local_iovcnt;
     uint64_t remote_iovcnt;
     uint64_t remote_addr;      // iov_base of the first remote iovec

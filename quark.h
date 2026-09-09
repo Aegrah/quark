@@ -413,8 +413,9 @@ enum process_vm_access_operation {
 };
 
 struct quark_process_vm_access {
-	u32	target_pid;
+	u32	target_pid;	/* resolved global tgid of the target */
 	u32	operation;	/* enum process_vm_access_operation */
+	u64	target_start_time_ns;
 	u64	local_iovcnt;
 	u64	remote_iovcnt;
 	u64	remote_addr;

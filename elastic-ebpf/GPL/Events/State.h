@@ -88,7 +88,13 @@ struct ebpf_events_memfd_create_state {
 };
 
 struct ebpf_events_process_vm_access_state {
-    u32 target_pid;
+    // Resolved by the mm_access hook, which runs inside the syscall with the
+    // target task already looked up from the caller-supplied (namespace-local)
+    // pid. target_tgid is therefore a global tgid comparable to the caller's,
+    // which the raw syscall argument is not.
+    u32 target_tgid;
+    u32 target_resolved;
+    u64 target_start_time_ns;
     u32 operation;
     u64 local_iovcnt;
     u64 remote_iovcnt;

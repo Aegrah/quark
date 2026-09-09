@@ -483,18 +483,16 @@ static int process_vm_access_enter(struct syscall_trace_enter *ctx,
     if (is_kernel_thread(task))
         goto out;
 
-    pid_t curr_tgid   = BPF_CORE_READ(task, tgid);
-    pid_t target_tgid = (pid_t)ex_args->pid;
-
-    // Collection only when source and target refer to different processes.
-    if (target_tgid == curr_tgid)
-        goto out;
-
+    // The target is not identified here: ex_args->pid is relative to the
+    // caller's pid namespace and may name a thread rather than a thread group,
+    // so it is not comparable to our tgid and not usable downstream. The kernel
+    // resolves it with find_get_task_by_vpid() and hands the task to
+    // mm_access(), which is where the target is recorded. Same-process calls are
+    // suppressed at exit on the resolved identity.
     struct iovec remote_iov = {};
     bpf_probe_read_user(&remote_iov, sizeof(remote_iov), ex_args->rvec);
 
     struct ebpf_events_state state          = {};
-    state.process_vm_access.target_pid       = target_tgid;
     state.process_vm_access.operation        = operation;
     state.process_vm_access.local_iovcnt     = ex_args->liovcnt;
     state.process_vm_access.remote_iovcnt    = ex_args->riovcnt;
@@ -505,6 +503,52 @@ static int process_vm_access_enter(struct syscall_trace_enter *ctx,
 out:
     preempt_enable();
     return 0;
+}
+
+// mm_access() is reached from process_vm_rw() with the target task already
+// resolved, and before ptrace_may_access() decides the call. Recording here
+// keeps denied cross-process attempts (the interesting ones) as events, which
+// gating on the LSM check itself would drop. It is also reached from
+// /proc/<pid>/mem and ptrace; those callers have no process_vm_access state on
+// this thread, so the lookup below ignores them.
+static int process_vm_access_target(const struct task_struct *target)
+{
+    struct ebpf_events_state *state;
+
+    state = ebpf_events_state__get(EBPF_EVENTS_STATE_PROCESS_VM_ACCESS);
+    if (state == NULL)
+        return 0;
+
+    state->process_vm_access.target_tgid          = BPF_CORE_READ(target, tgid);
+    state->process_vm_access.target_start_time_ns =
+        BPF_CORE_READ(target, group_leader, start_time);
+    state->process_vm_access.target_resolved      = 1;
+
+    return 0;
+}
+
+SEC("fentry/mm_access")
+int BPF_PROG(fentry__mm_access, struct task_struct *target)
+{
+    int r;
+
+    preempt_disable();
+    r = process_vm_access_target(target);
+    preempt_enable();
+
+    return r;
+}
+
+SEC("kprobe/mm_access")
+int BPF_KPROBE(kprobe__mm_access, struct task_struct *target)
+{
+    int r;
+
+    preempt_disable();
+    r = process_vm_access_target(target);
+    preempt_enable();
+
+    return r;
 }
 
 static int process_vm_access_exit(struct syscall_trace_exit *args)
@@ -519,11 +563,16 @@ static int process_vm_access_exit(struct syscall_trace_exit *args)
     struct ebpf_events_process_vm_access_state saved = state->process_vm_access;
     ebpf_events_state__del(EBPF_EVENTS_STATE_PROCESS_VM_ACCESS);
 
-    if (ebpf_events_is_trusted_pid())
+    // No target recorded means the kernel never reached mm_access(), so there
+    // was no process to access (bad pid, or the call failed before lookup).
+    if (!saved.target_resolved)
         goto out;
 
     const struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-    if (is_kernel_thread(task))
+
+    // Both are global tgids, so this is correct inside a pid namespace and for
+    // a target named by thread id.
+    if (saved.target_tgid == (u32)BPF_CORE_READ(task, tgid))
         goto out;
 
     struct ebpf_process_vm_access_event *event =
@@ -535,7 +584,8 @@ static int process_vm_access_exit(struct syscall_trace_exit *args)
     event->hdr.ts    = bpf_ktime_get_boot_ns();
     ebpf_pid_info__fill(&event->pids, task);
 
-    event->target_pid       = saved.target_pid;
+    event->target_pid            = saved.target_tgid;
+    event->target_start_time_ns  = saved.target_start_time_ns;
     event->operation        = saved.operation;
     event->local_iovcnt     = saved.local_iovcnt;
     event->remote_iovcnt    = saved.remote_iovcnt;
