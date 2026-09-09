@@ -1384,7 +1384,7 @@ t_process_vm_access(const struct test *t, struct quark_queue_attr *qa)
 	const struct quark_event		*qev;
 	const struct quark_process_vm_access	*qpva;
 	int					 to_child[2], to_parent[2];
-	pid_t					 child;
+	pid_t					 child, dead;
 	u64					 remote_addr;
 	char					 wbuf[8] = {
 		'q', 'u', 'a', 'r', 'k', 't', 's', 't'
@@ -1446,6 +1446,19 @@ t_process_vm_access(const struct test *t, struct quark_queue_attr *qa)
 	(void)process_vm_writev(getpid(), &local, 1, &remote, 1, 0);
 	(void)process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
 
+	/*
+	 * A call naming a pid that no longer exists never reaches mm_access(),
+	 * so no target is resolved and nothing is reported. Reap the child
+	 * first so the pid is reliably gone.
+	 */
+	if ((dead = fork()) == -1)
+		err(1, "fork");
+	if (dead == 0)
+		_exit(0);
+	if (waitpid(dead, NULL, 0) == -1)
+		err(1, "waitpid");
+	(void)process_vm_readv(dead, &local, 1, &remote, 1, 0);
+
 	/* Successful write into the child's memory */
 	local.iov_base = wbuf;
 	local.iov_len = sizeof(wbuf);
@@ -1473,6 +1486,9 @@ t_process_vm_access(const struct test *t, struct quark_queue_attr *qa)
 			errx(1, "unexpected process_vm_access target_pid %u",
 			    qpva->target_pid);
 		}
+		/* Proves the target was resolved from the task, not from the
+		 * raw syscall argument. */
+		assert(qpva->target_start_time_ns != 0);
 		switch (qpva->operation) {
 		case QUARK_PROCESS_VM_ACCESS_WRITE:
 			assert(!seen_write);
