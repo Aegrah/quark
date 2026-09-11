@@ -144,6 +144,9 @@ int			 bpf_queue_open(struct quark_queue *);
 struct bpf_probes	*quark_get_bpf_probes(struct quark_queue *);
 int			 quark_queue_trusted_pid_add(struct quark_queue *, u32);
 int			 quark_queue_trusted_pid_reset(struct quark_queue *);
+int			 quark_queue_file_access_name_add(struct quark_queue *,
+			     const char *, int);
+int			 quark_queue_file_access_name_reset(struct quark_queue *);
 
 /* kprobe_queue.c */
 int			 kprobe_queue_open(struct quark_queue *);
@@ -260,6 +263,7 @@ enum raw_types {
 	RAW_TTY,
 	RAW_GETPID,
 	RAW_MPROTECT,
+	RAW_FILE_ACCESS,
 	RAW_NUM_TYPES		/* must be last */
 };
 
@@ -400,6 +404,49 @@ struct raw_file {
 	struct quark_file	*quark_file;
 };
 
+/*
+ * An open(2) family call on a file whose name matched one of the anchors
+ * given to quark_queue_file_access_name_add(3), successful or failed with
+ * EACCES, EPERM or ENOENT. Successful opens carry the resolved path and inode
+ * data; failed opens carry the requested string (requested) and, for a
+ * relative name, the directory it was relative to (base_dir), path is then
+ * the join of both when base_dir is known. One event per process life, file
+ * and access class; see QUARK_FILE_ACCESS_F_*.
+ */
+/* Roles for quark_queue_file_access_name_add(3), name is a file or a directory */
+#define QUARK_FILE_ACCESS_NAME_LEAF	(1 << 0)
+#define QUARK_FILE_ACCESS_NAME_PARENT	(1 << 1)
+#define QUARK_FILE_ACCESS_NAME_MAX	64		/* including NUL */
+
+#define QUARK_FILE_ACCESS_F_FAILED	(1 << 0)	/* error set, inode data absent */
+#define QUARK_FILE_ACCESS_F_RELATIVE	(1 << 1)	/* requested is relative to base_dir */
+#define QUARK_FILE_ACCESS_F_PROCFS	(1 << 2)	/* /proc/<pid>/ entry, target_* set */
+
+struct quark_file_access {
+	const char	*path;		/* resolved path, NULL if unknown */
+	const char	*requested;	/* string passed to open(2), failed opens only */
+	const char	*base_dir;	/* dir of a relative failed open, NULL if unknown */
+	const char	*sym_target;	/* NULL or symlink target */
+	u64		 inode;		/* as stat.st_ino, 0 on failure */
+	u64		 size;
+	u32		 mode;		/* as stat.st_mode, 0 on failure */
+	u32		 uid;
+	u32		 gid;
+	u32		 open_flags;	/* O_* the kernel used, as in fcntl.h */
+	u32		 fmode;		/* kernel FMODE_* on success */
+	s32		 error;		/* 0 or errno of the failed open */
+	s32		 dfd;		/* dirfd of a relative failed open */
+	u32		 flags;		/* QUARK_FILE_ACCESS_F_* */
+	u32		 target_tid;	/* QUARK_FILE_ACCESS_F_PROCFS */
+	u32		 target_pid;	/* QUARK_FILE_ACCESS_F_PROCFS, 0 if the task is gone */
+	u64		 target_start_time;
+	char		 storage[];	/* strings point here */
+};
+
+struct raw_file_access {
+	struct quark_file_access	*quark_file_access;
+};
+
 struct quark_ptrace {
 	u32	child_pid;
 	s64	request;
@@ -508,6 +555,7 @@ struct raw_event {
 		struct raw_module_load		module_load;
 		struct raw_shm			shm;
 		struct raw_tty			tty;
+		struct raw_file_access		file_access;
 	};
 };
 
@@ -542,6 +590,7 @@ struct quark_event {
 #define QUARK_EV_TTY			(1 << 13)
 #define QUARK_EV_GETPID			(1 << 14)
 #define QUARK_EV_MPROTECT		(1 << 15)
+#define QUARK_EV_FILE_ACCESS		(1 << 16)	/* experimental */
 	u64				 events;
 	u64				 time;
 	const struct quark_process	*process;
@@ -554,6 +603,7 @@ struct quark_event {
 	struct quark_module_load	*module_load;
 	struct quark_shm		*shm;
 	struct quark_tty		*tty;
+	struct quark_file_access	*file_access;
 #define QUARK_ID_CHANGE_SETSID		(1 << 0)
 #define QUARK_ID_CHANGE_SETUID		(1 << 1)
 #define QUARK_ID_CHANGE_SETGID		(1 << 2)
@@ -924,6 +974,7 @@ struct quark_queue_attr {
 #define QQ_GETPID		(1 << 13)
 #define QQ_NOVA			(1 << 14)
 #define QQ_MPROTECT		(1 << 15)
+#define QQ_FILE_ACCESS		(1 << 16)	/* experimental */
 	int			 flags;
 	int			 max_length;
 	int			 cache_grace_time;	/* in ms */
