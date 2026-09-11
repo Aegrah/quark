@@ -237,4 +237,34 @@ struct inode___6_11 {
 	void			*i_private; /* fs or device private pointer */
 };
 
+/*
+ * RHEL 8 (4.18) backported the 5.7 widening of self_exec_id to u64 under
+ * kABI: the live field moved into the task_struct_rh extension, reached
+ * through task_struct.task_struct_rh, while task_struct keeps a dead
+ * rh_reserved_self_exec_id. Partial definitions, CO-RE matches by name.
+ */
+struct task_struct_rh___el8 {
+	u64			parent_exec_id;
+	u64			self_exec_id;
+};
+
+struct task_struct___el8 {
+	struct task_struct_rh___el8	*task_struct_rh;
+};
+
+/*
+ * Before 4.19 (2c4704756cab7cfa031ada4dab361562f0e357c0) a task hung off its
+ * struct pid through pid_link.node inside task_struct.pids[]; 4.19 flattened
+ * it into pid_links[]. Partial definition for the old layout, PIDTYPE_PID is
+ * index 0 so the node of pids[0] sits at the offset of pids itself.
+ */
+struct pid_link___4_18 {
+	struct hlist_node	node;
+	struct pid		*pid;
+};
+
+struct task_struct___4_18 {
+	struct pid_link___4_18	pids[3];
+};
+
 #endif	/* _VMLINUX_EXTRA_H_ */

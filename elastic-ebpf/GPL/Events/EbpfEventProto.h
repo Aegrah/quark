@@ -46,6 +46,7 @@ enum ebpf_event_type {
     EBPF_EVENT_PROCESS_LOAD_MODULE          = (1 << 19),
     EBPF_EVENT_NETWORK_DNS_PKT              = (1 << 20),
     EBPF_EVENT_PROCESS_GETPID               = (1 << 21),
+    EBPF_EVENT_FILE_ACCESS                  = (1 << 22),
 };
 
 struct ebpf_event_header {
@@ -230,6 +231,45 @@ struct ebpf_file_modify_event {
     char comm[TASK_COMM_LEN];
 
     // Variable length fields: path, symlink_target_path, pids_ss_cgroup_path
+    struct ebpf_varlen_fields_start vl_fields;
+} __attribute__((packed));
+
+// Leaf and parent names the file access probe matches an open against before
+// it resolves anything. Names are NUL padded so the fixed size key hashes the
+// same in the probe and in userspace; a longer component never matches.
+#define EBPF_FILE_ACCESS_NAME_MAX 64
+
+struct ebpf_file_access_name {
+    char name[EBPF_FILE_ACCESS_NAME_MAX];
+} __attribute__((packed));
+
+// Value of the anchor map, which roles a name is allowed to match in.
+#define EBPF_FILE_ACCESS_ANCHOR_LEAF (1 << 0)
+#define EBPF_FILE_ACCESS_ANCHOR_PARENT (1 << 1)
+
+// ebpf_file_access_event.flags
+#define EBPF_FILE_ACCESS_F_FAILED (1 << 0)   // open failed: error set, finfo and path empty
+#define EBPF_FILE_ACCESS_F_RELATIVE (1 << 1) // failed open of a relative name: cwd holds the base dir
+#define EBPF_FILE_ACCESS_F_PROCFS (1 << 2)   // procfs entry of another task: target_* set
+
+struct ebpf_file_access_event {
+    struct ebpf_event_header hdr;
+    struct ebpf_pid_info pids;
+    struct ebpf_cred_info creds;
+    struct ebpf_file_info finfo;
+    uint32_t mntns;
+    char comm[TASK_COMM_LEN];
+    uint32_t open_flags; // O_* the kernel used (open_flags.open_flag), before do_dentry_open strips
+    uint32_t fmode;      // file.f_mode on success, 0 on failure
+    int32_t error;       // 0 on success, positive errno on failure
+    uint32_t flags;      // EBPF_FILE_ACCESS_F_*
+    int32_t dfd;         // failed relative opens: the dirfd the name was relative to
+    uint32_t target_tid;
+    uint32_t target_tgid;
+    uint64_t target_start_time_ns;
+
+    // Variable length fields: path, symlink_target_path, pids_ss_cgroup_path;
+    // failed opens carry filename (the requested string) and, when relative, cwd
     struct ebpf_varlen_fields_start vl_fields;
 } __attribute__((packed));
 
