@@ -182,6 +182,7 @@ opened path, so a user with a list of full paths registers the leaf of each and
 filters the resolved path in the resulting
 .Vt quark_file_access
 itself.
+Failed opens are only matched on the leaf.
 .Pp
 .Ft void
 .Fn quark_queue_file_access_name_reset "struct quark_queue *qq"
