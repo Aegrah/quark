@@ -38,3 +38,15 @@ Changes from 0.4 to 0.5
 ~~~~~~~~~~~~~~~~~~~~~~~
   o Added support for file events, quark_event{} gets a file member.
   o entity_id was added to quark_process{}.
+
+Changes from 0.5 to 0.6
+~~~~~~~~~~~~~~~~~~~~~~~
+  o Added file access events (QUARK_EV_FILE_ACCESS, QQ_FILE_ACCESS,
+    -a on quark-mon), quark_event{} gets a file_access member. The
+    EBPF probe reports the open of any file whose last or second to
+    last path component was registered through
+    quark_queue_file_access_name_add(3), and failed opens with
+    EACCES, EPERM or ENOENT of a registered file name. Events are
+    deduplicated in the kernel per process life, file and access
+    class. Opens of another task's /proc/<pid>/ entries name the
+    target task. Experimental.
