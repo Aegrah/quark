@@ -159,15 +159,18 @@ which reports opens of a file called
 .Fa name ,
 and
 .Dv QUARK_FILE_ACCESS_NAME_PARENT ,
-which reports opens of any file whose directory is called
+which reports opens of any file whose directory, or one of the two directories
+above it, is called
 .Fa name .
 Registering an existing name adds to its roles.
-The names are matched in the kernel against the last two components of the
+The names are matched in the kernel against the last four components of the
 opened path, so a user with a list of full paths registers the leaf of each and
 filters the resolved path in the resulting
 .Vt quark_file_access
 itself.
-Failed opens are only matched on the leaf.
+Failed opens are matched the same way on the requested string, so a relative
+name only exposes the components it spells out.
+The walk does not cross mount points.
 .Pp
 .Ft void
 .Fn quark_queue_file_access_name_reset "struct quark_queue *qq"
