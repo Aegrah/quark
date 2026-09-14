@@ -426,6 +426,11 @@ struct {
 #define FILE_ACCESS_O_PATH 010000000
 #define FILE_ACCESS___FMODE_EXEC 0x20
 
+// How many directories above the leaf a parent anchor is looked for, so that
+// a directory of interest also covers files a few levels below it. Bounded:
+// every open on the system pays for the misses.
+#define FILE_ACCESS_ANCESTORS 3
+
 // Per-cpu scratch, safe since the callers run with preemption disabled. The
 // requested pathname of a failed open is read here, and the keys and paths
 // live here rather than on the stack: do_filp_open__exit() sits close to the
@@ -437,6 +442,7 @@ struct file_access_scratch {
     struct ebpf_file_access_name key;
     u32 leaf;
     int len;
+    s32 slash[FILE_ACCESS_ANCESTORS + 1]; // last separators of filename, most recent first, -1 if none
     struct file_access_file_key file_key;
     struct file_access_fail_key fail_key;
     struct file_access_seen fresh;
@@ -524,6 +530,29 @@ static __always_inline u32 file_access_anchor(struct ebpf_file_access_name *key,
     return roles != NULL ? *roles : 0;
 }
 
+// True if the leaf is a leaf anchor or one of its FILE_ACCESS_ANCESTORS
+// nearest ancestors is a parent anchor. The walk stops at the root of the
+// dentry tree, which is its own parent, so it does not cross mounts.
+static __always_inline bool file_access_anchored(struct ebpf_file_access_name *key, struct dentry *de)
+{
+    struct dentry *parent;
+    int            i;
+
+    if (file_access_anchor(key, BPF_CORE_READ(de, d_name.name)) & EBPF_FILE_ACCESS_ANCHOR_LEAF)
+        return true;
+    for (i = 0; i < FILE_ACCESS_ANCESTORS; i++) {
+        parent = BPF_CORE_READ(de, d_parent);
+        if (parent == NULL || parent == de)
+            return false;
+        if (file_access_anchor(key, BPF_CORE_READ(parent, d_name.name)) &
+            EBPF_FILE_ACCESS_ANCHOR_PARENT)
+            return true;
+        de = parent;
+    }
+
+    return false;
+}
+
 // Fills target_* for an entry of another task's /proc/<pid>/ tree, returns
 // true if the file is such an entry. PROC_I(inode)->pid identifies the task
 // regardless of how the caller spelled the pid (self, a tid, a pid namespace).
@@ -574,7 +603,7 @@ static void file_access_event__fill_task(struct ebpf_file_access_event *event,
     bpf_get_current_comm(event->comm, TASK_COMM_LEN);
 }
 
-// A completed open: leaf or parent anchor hit, dedup, resolve, emit. Kept
+// A completed open: leaf or ancestor anchor hit, dedup, resolve, emit. Kept
 // out of line, like prepare_and_send_file_event(), so its locals are not
 // added to the do_filp_open__exit() frame that every open pays for.
 static __attribute__((noinline)) void file_access__open(struct file *f, u32 open_flags)
@@ -591,10 +620,7 @@ static __attribute__((noinline)) void file_access__open(struct file *f, u32 open
         return;
 
     de = BPF_CORE_READ(f, f_path.dentry);
-    if (!(file_access_anchor(&scratch->key, BPF_CORE_READ(de, d_name.name)) &
-          EBPF_FILE_ACCESS_ANCHOR_LEAF) &&
-        !(file_access_anchor(&scratch->key, BPF_CORE_READ(de, d_parent, d_name.name)) &
-          EBPF_FILE_ACCESS_ANCHOR_PARENT))
+    if (!file_access_anchored(&scratch->key, de))
         return;
 
     task                    = (struct task_struct *)bpf_get_current_task();
@@ -648,9 +674,42 @@ static __attribute__((noinline)) void file_access__open(struct file *f, u32 open
     ebpf_ringbuf_write(&ringbuf, event, EVENT_SIZE(event), 0);
 }
 
+// The string counterpart of the ancestor walk in file_access_anchored(): true
+// if one of the FILE_ACCESS_ANCESTORS directory components before the leaf of
+// scratch->filename is a parent anchor. Component i lies between slash[i + 1]
+// and slash[i]; a relative name's first component starts at 0, which is what
+// the -1 sentinel yields. The indices come from map memory for the same
+// reason as leaf and len in the caller.
+static __always_inline bool file_access_string_anchored(struct file_access_scratch *scratch)
+{
+    u32 *roles;
+    int  i, start, end, clen;
+
+    for (i = 0; i < FILE_ACCESS_ANCESTORS; i++) {
+        end   = *(volatile s32 *)&scratch->slash[i];
+        start = *(volatile s32 *)&scratch->slash[i + 1] + 1;
+        if (end < 0)
+            return false;
+        clen = end - start;
+        if (clen <= 0 || clen >= EBPF_FILE_ACCESS_NAME_MAX)
+            continue;
+        start &= FILE_ACCESS_FILENAME_MAX - 1;
+        clen &= EBPF_FILE_ACCESS_NAME_MAX - 1;
+        __builtin_memset(&scratch->key, 0, sizeof(scratch->key));
+        if (bpf_probe_read_kernel(scratch->key.name, clen, &scratch->filename[start]) != 0)
+            return false;
+        roles = bpf_map_lookup_elem(&elastic_ebpf_file_access_anchors, &scratch->key);
+        if (roles != NULL && (*roles & EBPF_FILE_ACCESS_ANCHOR_PARENT))
+            return true;
+    }
+
+    return false;
+}
+
 // A failed open: only EACCES, EPERM and ENOENT are of interest, and only when
-// the leaf of the requested string is an anchor. There is no dentry, so the
-// name is matched on the string and the base directory of a relative name is
+// the leaf of the requested string is a leaf anchor or one of the directory
+// components before it is a parent anchor. There is no dentry, so the names
+// are matched on the string and the base directory of a relative name is
 // resolved so userspace can rebuild the path.
 static __attribute__((noinline)) void file_access__open_failed(int dfd, struct filename *pathname,
                                                                u32 open_flags, long error)
@@ -660,7 +719,7 @@ static __attribute__((noinline)) void file_access__open_failed(int dfd, struct f
     struct task_struct            *task;
     const char                    *name;
     u32                            zero = 0, hash;
-    int                            len, leaf, i;
+    int                            len, leaf, i, j;
     bool                           relative;
 
     if (error != EACCES && error != EPERM && error != ENOENT)
@@ -679,22 +738,29 @@ static __attribute__((noinline)) void file_access__open_failed(int dfd, struct f
     if (len <= 1 || len >= (int)sizeof(scratch->filename)) // empty, or truncated: leaf unknown
         return;
 
-    // FNV-1a over the whole string for the dedup key, and the leaf start,
-    // which is the byte after the last '/'. The length and leaf index live
-    // in the scratch map across the loop on purpose: a register the verifier
+    // FNV-1a over the whole string for the dedup key, the leaf start, which
+    // is the byte after the last '/', and the positions of the last few '/'
+    // for the ancestor components. The length and indices live in the
+    // scratch map across the loop on purpose: a register the verifier
     // tracks as a distinct range on every iteration turns each loop exit
     // into a separate verification of everything after it, map memory is
     // opaque to it. The volatile reloads keep clang from forwarding the
     // stored values.
     scratch->leaf = 0;
     scratch->len  = len;
-    hash          = 2166136261u;
+    for (i = 0; i < FILE_ACCESS_ANCESTORS + 1; i++)
+        scratch->slash[i] = -1;
+    hash = 2166136261u;
     for (i = 0; i < FILE_ACCESS_FILENAME_MAX; i++) {
         if (i >= len - 1) // len includes the NUL
             break;
         hash = (hash ^ (u8)scratch->filename[i]) * 16777619u;
-        if (scratch->filename[i] == '/')
+        if (scratch->filename[i] == '/') {
             scratch->leaf = i + 1;
+            for (j = FILE_ACCESS_ANCESTORS; j > 0; j--)
+                scratch->slash[j] = scratch->slash[j - 1];
+            scratch->slash[0] = i;
+        }
     }
     len  = *(volatile int *)&scratch->len;
     leaf = *(volatile u32 *)&scratch->leaf & (FILE_ACCESS_FILENAME_MAX - 1);
@@ -705,7 +771,8 @@ static __attribute__((noinline)) void file_access__open_failed(int dfd, struct f
                                   &scratch->filename[leaf]) <= 0)
         return;
     u32 *roles = bpf_map_lookup_elem(&elastic_ebpf_file_access_anchors, &scratch->key);
-    if (roles == NULL || !(*roles & EBPF_FILE_ACCESS_ANCHOR_LEAF))
+    if ((roles == NULL || !(*roles & EBPF_FILE_ACCESS_ANCHOR_LEAF)) &&
+        !file_access_string_anchored(scratch))
         return;
 
     task                        = (struct task_struct *)bpf_get_current_task();

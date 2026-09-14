@@ -413,7 +413,10 @@ struct raw_file {
  * the join of both when base_dir is known. One event per process life, file
  * and access class; see QUARK_FILE_ACCESS_F_*.
  */
-/* Roles for quark_queue_file_access_name_add(3), name is a file or a directory */
+/*
+ * Roles for quark_queue_file_access_name_add(3), name is a file or a
+ * directory; a directory covers up to three levels below it.
+ */
 #define QUARK_FILE_ACCESS_NAME_LEAF	(1 << 0)
 #define QUARK_FILE_ACCESS_NAME_PARENT	(1 << 1)
 #define QUARK_FILE_ACCESS_NAME_MAX	64		/* including NUL */
