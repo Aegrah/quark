@@ -146,6 +146,37 @@ type Ptrace struct {
 	Data     uint64
 }
 
+// Snapshot status values match the public Quark protocol.
+const (
+	ProcessVmSnapshotComplete uint32 = iota
+	ProcessVmSnapshotUnreadable
+	ProcessVmSnapshotTruncated
+	ProcessVmSnapshotOverflow
+	ProcessVmSnapshotInvalid
+)
+
+// ProcessVmAccess records a syscall result and best-effort entry snapshots.
+// Target identity is valid only when TargetResolved is nonzero.
+type ProcessVmAccess struct {
+	TargetPid            uint32
+	Operation            uint32
+	TargetStartTimeNs    uint64
+	LocalIovcnt          uint64
+	RemoteIovcnt         uint64
+	FirstRemoteAddr      uint64
+	FirstRemoteLen       uint64
+	Ret                  int64
+	RequestedPid         int32
+	CallerPidns          uint32
+	Flags                uint64
+	LocalCapacity        uint64
+	RemoteCapacity       uint64
+	LocalSnapshotStatus  uint32
+	RemoteSnapshotStatus uint32
+	FirstRemoteValid     uint32
+	TargetResolved       uint32
+}
+
 type ModuleLoad struct {
 	Name       string
 	Version    string
@@ -184,15 +215,16 @@ type Tty struct {
 // Events is a bitmask of QUARK_EV_* and expresses what triggered this
 // event, Process is the context of the Event.
 type Event struct {
-	Events     uint64
-	Process    Process
-	Socket     *Socket
-	Packet     *Packet
-	File       *File
-	Ptrace     *Ptrace
-	ModuleLoad *ModuleLoad
-	Shm        *any // ShmGet, MemFd or ShmOpen
-	Tty        *Tty
+	Events          uint64
+	Process         Process
+	Socket          *Socket
+	Packet          *Packet
+	File            *File
+	Ptrace          *Ptrace
+	ModuleLoad      *ModuleLoad
+	Shm             *any // ShmGet, MemFd or ShmOpen
+	Tty             *Tty
+	ProcessVmAccess *ProcessVmAccess
 }
 
 // Queue holds the state of a quark instance.
@@ -203,34 +235,36 @@ type Queue struct {
 
 const (
 	// quark_queue_attr{} flags
-	QQ_THREAD_EVENTS = int(C.QQ_THREAD_EVENTS)
-	QQ_KPROBE        = int(C.QQ_KPROBE)
-	QQ_EBPF          = int(C.QQ_EBPF)
-	QQ_MIN_AGG       = int(C.QQ_MIN_AGG)
-	QQ_ENTRY_LEADER  = int(C.QQ_ENTRY_LEADER)
-	QQ_SOCK_CONN     = int(C.QQ_SOCK_CONN)
-	QQ_DNS           = int(C.QQ_DNS)
-	QQ_BYPASS        = int(C.QQ_BYPASS)
-	QQ_FILE          = int(C.QQ_FILE)
-	QQ_SHM           = int(C.QQ_SHM)
-	QQ_TTY           = int(C.QQ_TTY)
-	QQ_PTRACE        = int(C.QQ_PTRACE)
-	QQ_MODULE_LOAD   = int(C.QQ_MODULE_LOAD)
-	QQ_ALL_BACKENDS  = int(C.QQ_ALL_BACKENDS)
+	QQ_THREAD_EVENTS     = int(C.QQ_THREAD_EVENTS)
+	QQ_KPROBE            = int(C.QQ_KPROBE)
+	QQ_EBPF              = int(C.QQ_EBPF)
+	QQ_MIN_AGG           = int(C.QQ_MIN_AGG)
+	QQ_ENTRY_LEADER      = int(C.QQ_ENTRY_LEADER)
+	QQ_SOCK_CONN         = int(C.QQ_SOCK_CONN)
+	QQ_DNS               = int(C.QQ_DNS)
+	QQ_BYPASS            = int(C.QQ_BYPASS)
+	QQ_FILE              = int(C.QQ_FILE)
+	QQ_SHM               = int(C.QQ_SHM)
+	QQ_TTY               = int(C.QQ_TTY)
+	QQ_PTRACE            = int(C.QQ_PTRACE)
+	QQ_MODULE_LOAD       = int(C.QQ_MODULE_LOAD)
+	QQ_PROCESS_VM_ACCESS = int(C.QQ_PROCESS_VM_ACCESS)
+	QQ_ALL_BACKENDS      = int(C.QQ_ALL_BACKENDS)
 
 	// Event.events
-	QUARK_EV_FORK             = uint64(C.QUARK_EV_FORK)
-	QUARK_EV_EXEC             = uint64(C.QUARK_EV_EXEC)
-	QUARK_EV_EXIT             = uint64(C.QUARK_EV_EXIT)
-	QUARK_EV_SETPROCTITLE     = uint64(C.QUARK_EV_SETPROCTITLE)
-	QUARK_EV_SOCK_CONN_CLOSED = uint64(C.QUARK_EV_SOCK_CONN_CLOSED)
-	QUARK_EV_PACKET           = uint64(C.QUARK_EV_PACKET)
-	QUARK_EV_BYPASS           = uint64(C.QUARK_EV_BYPASS)
-	QUARK_EV_FILE             = uint64(C.QUARK_EV_FILE)
-	QUARK_EV_PTRACE           = uint64(C.QUARK_EV_PTRACE)
-	QUARK_EV_MODULE_LOAD      = uint64(C.QUARK_EV_MODULE_LOAD)
-	QUARK_EV_SHM              = uint64(C.QUARK_EV_SHM)
-	QUARK_EV_TTY              = uint64(C.QUARK_EV_TTY)
+	QUARK_EV_FORK              = uint64(C.QUARK_EV_FORK)
+	QUARK_EV_EXEC              = uint64(C.QUARK_EV_EXEC)
+	QUARK_EV_EXIT              = uint64(C.QUARK_EV_EXIT)
+	QUARK_EV_SETPROCTITLE      = uint64(C.QUARK_EV_SETPROCTITLE)
+	QUARK_EV_SOCK_CONN_CLOSED  = uint64(C.QUARK_EV_SOCK_CONN_CLOSED)
+	QUARK_EV_PACKET            = uint64(C.QUARK_EV_PACKET)
+	QUARK_EV_BYPASS            = uint64(C.QUARK_EV_BYPASS)
+	QUARK_EV_FILE              = uint64(C.QUARK_EV_FILE)
+	QUARK_EV_PTRACE            = uint64(C.QUARK_EV_PTRACE)
+	QUARK_EV_MODULE_LOAD       = uint64(C.QUARK_EV_MODULE_LOAD)
+	QUARK_EV_SHM               = uint64(C.QUARK_EV_SHM)
+	QUARK_EV_TTY               = uint64(C.QUARK_EV_TTY)
+	QUARK_EV_PROCESS_VM_ACCESS = uint64(C.QUARK_EV_PROCESS_VM_ACCESS)
 
 	// EntryLeaderType
 	QUARK_ELT_UNKNOWN   = int(C.QUARK_ELT_UNKNOWN)
@@ -272,13 +306,14 @@ type QueueAttr struct {
 
 // Documented in https://elastic.github.io/quark/quark_queue_get_stats.3.html.
 type Stats struct {
-	Insertions         uint64
-	Removals           uint64
-	Aggregations       uint64
-	NonAggregations    uint64
-	Lost               uint64
-	GarbageCollections uint64
-	Backend            int
+	ProcessVmStateFailures uint64
+	Insertions             uint64
+	Removals               uint64
+	Aggregations           uint64
+	NonAggregations        uint64
+	Lost                   uint64
+	GarbageCollections     uint64
+	Backend                int
 }
 
 const (
@@ -368,6 +403,10 @@ func (queue *Queue) GetEvent() (Event, bool) {
 		ptrace := ptraceFromC(&cev.ptrace)
 		event.Ptrace = &ptrace
 	}
+	if event.Events&QUARK_EV_PROCESS_VM_ACCESS != 0 {
+		processVmAccess := processVmAccessFromC(&cev.process_vm_access)
+		event.ProcessVmAccess = &processVmAccess
+	}
 	if cev.module_load != nil {
 		ml := moduleLoadFromC(cev.module_load)
 		event.ModuleLoad = &ml
@@ -451,6 +490,7 @@ func (queue *Queue) Stats() Stats {
 	stats.Removals = uint64(cStats.removals)
 	stats.Aggregations = uint64(cStats.aggregations)
 	stats.NonAggregations = uint64(cStats.non_aggregations)
+	stats.ProcessVmStateFailures = uint64(cStats.process_vm_state_failures)
 	stats.Lost = uint64(cStats.lost)
 	stats.GarbageCollections = uint64(cStats.garbage_collections)
 	stats.Backend = int(cStats.backend)
@@ -600,6 +640,28 @@ func ptraceFromC(cPtrace *C.struct_quark_ptrace) Ptrace {
 	ptrace.Data = uint64(cPtrace.data)
 
 	return ptrace
+}
+
+func processVmAccessFromC(c *C.struct_quark_process_vm_access) ProcessVmAccess {
+	return ProcessVmAccess{
+		TargetPid:            uint32(c.target_pid),
+		Operation:            uint32(c.operation),
+		TargetStartTimeNs:    uint64(c.target_start_time_ns),
+		LocalIovcnt:          uint64(c.local_iovcnt),
+		RemoteIovcnt:         uint64(c.remote_iovcnt),
+		FirstRemoteAddr:      uint64(c.first_remote_addr),
+		FirstRemoteLen:       uint64(c.first_remote_len),
+		Ret:                  int64(c.ret),
+		RequestedPid:         int32(c.requested_pid),
+		CallerPidns:          uint32(c.caller_pidns),
+		Flags:                uint64(c.flags),
+		LocalCapacity:        uint64(c.local_capacity),
+		RemoteCapacity:       uint64(c.remote_capacity),
+		LocalSnapshotStatus:  uint32(c.local_snapshot_status),
+		RemoteSnapshotStatus: uint32(c.remote_snapshot_status),
+		FirstRemoteValid:     uint32(c.first_remote_valid),
+		TargetResolved:       uint32(c.target_resolved),
+	}
 }
 
 func moduleLoadFromC(cM *C.struct_quark_module_load) ModuleLoad {

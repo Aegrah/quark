@@ -38,3 +38,12 @@ Changes from 0.4 to 0.5
 ~~~~~~~~~~~~~~~~~~~~~~~
   o Added support for file events, quark_event{} gets a file member.
   o entity_id was added to quark_process{}.
+
+  o QQ_PROCESS_VM_ACCESS adds optional eBPF syscall-attempt telemetry (quark-mon
+    -A). It retains unresolved failures and parent/child access, suppressing
+    resolved same-thread-group access. Target start time uses CLOCK_MONOTONIC.
+    Vector fields are bounded user-memory snapshots, not accessed ranges;
+    capacities are valid only for complete snapshots. Ret is the signed syscall
+    result. New quark_queue_stats.process_vm_state_failures counts lost entries
+    when the feature's bounded correlation map cannot accept state. Ring-buffer
+    losses remain in the existing lost counter. Neither mechanism is lossless.

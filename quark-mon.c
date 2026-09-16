@@ -43,6 +43,8 @@ dump_stats(struct quark_queue *qq)
 	    "lost",
 	    "gc-cols"
 	);
+	if (qq->flags & QQ_PROCESS_VM_ACCESS)
+		fprintf(stderr, "%14s", "pva-statefail");
 	fputc('\n', stderr);
 	fprintf(stderr,
 	    "%14llu"
@@ -53,6 +55,8 @@ dump_stats(struct quark_queue *qq)
 	    "%14llu",
 	    s.insertions, s.removals, s.aggregations,
 	    s.non_aggregations, s.lost, s.garbage_collections);
+	if (qq->flags & QQ_PROCESS_VM_ACCESS)
+		fprintf(stderr, "%14llu", s.process_vm_state_failures);
 	fputc('\n', stderr);
 }
 
@@ -117,7 +121,7 @@ static void
 usage(void)
 {
 	fprintf(stderr, "usage: %s -h\n", program_invocation_short_name);
-	fprintf(stderr, "usage: %s [-BbDeFGgHhkLMNnSsTtv]\n",
+	fprintf(stderr, "usage: %s [-ABbDeFGgHhkLMNnSsTtv]\n",
 	    program_invocation_short_name);
 	fprintf(stderr, "%16c [-C filename ] [-K kubeconfig] "
 	    "[-l maxlength] [-m maxnodes]\n", ' ');
@@ -179,10 +183,13 @@ main(int argc, char *argv[])
 	kube_config = NULL;
 	print_event = print_dump;
 
-	while ((ch = getopt(argc, argv, "BbC:DEeFGgHhK:kLl:Mm:NnP:Ttr:SsvV")) != -1) {
+	while ((ch = getopt(argc, argv, "ABbC:DEeFGgHhK:kLl:Mm:NnP:Ttr:SsvV")) != -1) {
 		const char *errstr;
 
 		switch (ch) {
+		case 'A':
+			qa.flags |= QQ_PROCESS_VM_ACCESS;
+			break;
 		case 'B':
 			qa.flags |= QQ_BYPASS;
 			break;

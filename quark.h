@@ -252,6 +252,7 @@ enum raw_types {
 	RAW_SHM,
 	RAW_TTY,
 	RAW_GETPID,
+	RAW_PROCESS_VM_ACCESS,
 	RAW_NUM_TYPES		/* must be last */
 };
 
@@ -397,6 +398,45 @@ struct raw_ptrace {
 	struct quark_ptrace quark_ptrace;
 };
 
+enum quark_process_vm_access_operation {
+	QUARK_PROCESS_VM_ACCESS_READ  = 1,
+	QUARK_PROCESS_VM_ACCESS_WRITE = 2,
+};
+
+/* Snapshot status; capacities are meaningful only for COMPLETE. */
+enum quark_process_vm_snapshot_status {
+	QUARK_PROCESS_VM_SNAPSHOT_COMPLETE,
+	QUARK_PROCESS_VM_SNAPSHOT_UNREADABLE,
+	QUARK_PROCESS_VM_SNAPSHOT_TRUNCATED,
+	QUARK_PROCESS_VM_SNAPSHOT_OVERFLOW,
+	QUARK_PROCESS_VM_SNAPSHOT_INVALID,
+};
+
+/* User metadata is an entry snapshot, not authoritative accessed ranges. */
+struct quark_process_vm_access {
+	u32	target_pid;	/* host TGID; valid only when target_resolved */
+	u32	operation;
+	u64	target_start_time_ns; /* CLOCK_MONOTONIC, excluding suspend */
+	u64	local_iovcnt;
+	u64	remote_iovcnt;
+	u64	first_remote_addr;
+	u64	first_remote_len;
+	s64	ret;		/* signed syscall result, not snapshot size */
+	s32	requested_pid;	/* original signed PID in caller_pidns */
+	u32	caller_pidns;	/* active PID namespace inode */
+	u64	flags;
+	u64	local_capacity;
+	u64	remote_capacity;
+	u32	local_snapshot_status;
+	u32	remote_snapshot_status;
+	u32	first_remote_valid;
+	u32	target_resolved;
+};
+
+struct raw_process_vm_access {
+	struct quark_process_vm_access quark_process_vm_access;
+};
+
 struct quark_module_load {
 	char *name;
 	char *version;
@@ -471,6 +511,7 @@ struct raw_event {
 		struct raw_module_load		module_load;
 		struct raw_shm			shm;
 		struct raw_tty			tty;
+		struct raw_process_vm_access	process_vm_access;
 	};
 };
 
@@ -504,6 +545,7 @@ struct quark_event {
 #define QUARK_EV_SHM			(1 << 12)
 #define QUARK_EV_TTY			(1 << 13)
 #define QUARK_EV_GETPID			(1 << 14)
+#define QUARK_EV_PROCESS_VM_ACCESS	(1 << 17)
 	u64				 events;
 	u64				 time;
 	const struct quark_process	*process;
@@ -515,6 +557,7 @@ struct quark_event {
 	struct quark_module_load	*module_load;
 	struct quark_shm		*shm;
 	struct quark_tty		*tty;
+	struct quark_process_vm_access	 process_vm_access;
 #define QUARK_ID_CHANGE_SETSID		(1 << 0)
 #define QUARK_ID_CHANGE_SETUID		(1 << 1)
 #define QUARK_ID_CHANGE_SETGID		(1 << 2)
@@ -855,6 +898,7 @@ struct quark_queue_stats {
 	u64	aggregations;
 	u64	non_aggregations;
 	u64	lost;
+	u64	process_vm_state_failures; /* correlation map insertion failures */
 	u64	garbage_collections;
 	int	backend;	/* active backend, QQ_EBPF or QQ_KPROBE */
 	/* TODO u64	peak_nodes; */
@@ -883,6 +927,7 @@ struct quark_queue_attr {
 #define QQ_MODULE_LOAD		(1 << 12)
 #define QQ_GETPID		(1 << 13)
 #define QQ_NOVA			(1 << 14)
+#define QQ_PROCESS_VM_ACCESS	(1 << 17)
 #define QQ_ALL_BACKENDS		(QQ_KPROBE | QQ_EBPF)	/* QQ_NOVA excluded for now */
 	int			 flags;
 	int			 max_length;
