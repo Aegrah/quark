@@ -1405,6 +1405,7 @@ bpf_queue_open1(struct quark_queue *qq, int use_fentry)
 		}
 	} else {
 		if (bpf_map__set_autocreate(p->maps.elastic_ebpf_file_access_anchors, 0) != 0 ||
+		    bpf_map__set_autocreate(p->maps.elastic_ebpf_file_access_generation, 0) != 0 ||
 		    bpf_map__set_autocreate(p->maps.elastic_ebpf_file_access_file_seen, 0) != 0 ||
 		    bpf_map__set_autocreate(p->maps.elastic_ebpf_file_access_fail_seen, 0) != 0 ||
 		    bpf_map__set_autocreate(p->maps.elastic_ebpf_file_access_scratch, 0) != 0) {
@@ -1715,11 +1716,21 @@ file_access_anchors_map(struct quark_queue *qq)
 	return (m);
 }
 
+/*
+ * The names go first and the generation after: a hit between the two still
+ * belongs to the old set and claims its class under the old generation,
+ * where it is of no consequence. The other way around, an open under a
+ * stale name would claim the class under the new generation and suppress
+ * its report once the new names are in.
+ */
 int
 quark_queue_file_access_name_reset(struct quark_queue *qq)
 {
+	struct bpf_probes		*p;
 	struct bpf_map			*m;
 	struct ebpf_file_access_name	 k;
+	u64				 generation;
+	u32				 zero;
 	int				 r;
 
 	if ((m = file_access_anchors_map(qq)) == NULL)
@@ -1728,8 +1739,22 @@ quark_queue_file_access_name_reset(struct quark_queue *qq)
 		if (bpf_map__delete_elem(m, &k, sizeof(k), 0) != 0)
 			return (-1);
 	}
+	if (r != -ENOENT)
+		return (-1);
 
-	return (r == -ENOENT ? 0 : -1);
+	/* Can't fail, file_access_anchors_map() checked the same */
+	p = quark_get_bpf_probes(qq);
+	m = p->maps.elastic_ebpf_file_access_generation;
+	zero = 0;
+	if (bpf_map__lookup_elem(m, &zero, sizeof(zero), &generation,
+	    sizeof(generation), 0) != 0)
+		return (-1);
+	generation++;
+	if (bpf_map__update_elem(m, &zero, sizeof(zero), &generation,
+	    sizeof(generation), BPF_ANY) != 0)
+		return (-1);
+
+	return (0);
 }
 
 /*
