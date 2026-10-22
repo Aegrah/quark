@@ -348,6 +348,8 @@ main(int argc, char *argv[])
 
 	if ((qa.flags & QQ_ALL_BACKENDS) == 0)
 		qa.flags |= QQ_ALL_BACKENDS;
+	if (naccess > 0 && !(qa.flags & QQ_EBPF))
+		errx(1, "file access(a) needs the ebpf backend");
 
 	bzero(&sigact, sizeof(sigact));
 	sigact.sa_flags = SA_RESTART | SA_RESETHAND;
